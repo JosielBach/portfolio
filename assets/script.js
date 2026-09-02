@@ -3,6 +3,12 @@
 
   var reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 
+  var hub      = document.getElementById('hub');
+  var hubHint  = document.getElementById('hubHint');
+  var panels   = Array.prototype.slice.call(document.querySelectorAll('.panel'));
+  var order    = panels.map(function (p) { return p.id; });
+  var defaultHint = hubHint ? hubHint.innerHTML : '';
+  var current  = null;
 
   var nameTarget = document.getElementById('typedName');
   var cursor     = document.getElementById('heroCursor');
@@ -25,84 +31,131 @@
     })();
   }
 
-  /* -----------------------------------------------
-     NAVBAR — sombra ao rolar + seção ativa
-  ----------------------------------------------- */
-  var navbar   = document.getElementById('navbar');
-  var sections = document.querySelectorAll('section[id]');
-  var navItems = document.querySelectorAll('.nav-links a[data-section]');
-  var ticking  = false;
-
-  function onScroll() {
-    navbar.classList.toggle('scrolled', window.scrollY > 40);
-
-    var current = '';
-    sections.forEach(function (sec) {
-      if (window.scrollY >= sec.offsetTop - 100) current = sec.id;
-    });
-
-    navItems.forEach(function (a) {
-      a.classList.toggle('active', a.dataset.section === current);
-    });
-    ticking = false;
+  function idFromHash() {
+    var id = (location.hash || '').replace('#', '');
+    return order.indexOf(id) !== -1 ? id : null;
   }
 
-  window.addEventListener('scroll', function () {
-    if (!ticking) {
-      window.requestAnimationFrame(onScroll);
-      ticking = true;
+  function revealFades(panel) {
+    panel.querySelectorAll('.fade-in').forEach(function (el, i) {
+
+      el.style.transitionDelay = Math.min(i * 45, 480) + 'ms';
+      el.classList.add('visible');
+    });
+  }
+
+  function render() {
+    var id = idFromHash();
+    if (id === current) return;
+    current = id;
+
+    panels.forEach(function (p) {
+      var open = p.id === id;
+      p.classList.toggle('open', open);
+      p.setAttribute('aria-hidden', String(!open));
+      if (open) {
+        p.querySelector('.panel-body').scrollTop = 0;
+        revealFades(p);
+
+        setTimeout(function () { p.focus({ preventScroll: true }); }, 60);
+      }
+    });
+
+    hub.classList.toggle('dimmed', !!id);
+    hub.setAttribute('aria-hidden', String(!!id));
+
+    document.documentElement.classList.toggle('panel-open', !!id);
+    document.title = id
+      ? sectionLabel(id) + ' · Josiel Bach'
+      : 'Josiel Bach · Desenvolvedor Back-End .NET';
+  }
+
+  function sectionLabel(id) {
+    var node = document.querySelector('.node[data-target="' + id + '"] .node-label');
+    return node ? node.textContent : id;
+  }
+
+  function goHome() {
+    if (location.hash) {
+      history.pushState(null, '', location.pathname + location.search);
     }
-  }, { passive: true });
-
-  /* -----------------------------------------------
-     MENU MOBILE
-  ----------------------------------------------- */
-  var burger    = document.getElementById('burger');
-  var mobileNav = document.getElementById('mobileNav');
-
-  function closeMobile() {
-    burger.classList.remove('open');
-    mobileNav.classList.remove('open');
-    burger.setAttribute('aria-expanded', 'false');
+    render();
   }
 
-  burger.addEventListener('click', function () {
-    var open = mobileNav.classList.toggle('open');
-    burger.classList.toggle('open', open);
-    burger.setAttribute('aria-expanded', String(open));
+  function goTo(id, origin) {
+    if (location.hash.replace('#', '') === id) return;
+    var panel = document.getElementById(id);
+
+    if (panel) panel.style.transformOrigin = origin || '50% 50%';
+    history.pushState(null, '', '#' + id);
+    render();
+  }
+
+  function centerOf(el) {
+    var r = el.getBoundingClientRect();
+    return (r.left + r.width / 2).toFixed(0) + 'px ' + (r.top + r.height / 2).toFixed(0) + 'px';
+  }
+
+  window.addEventListener('hashchange', render);
+  window.addEventListener('popstate', render);
+
+  document.querySelectorAll('.node').forEach(function (node) {
+    node.addEventListener('click', function (e) {
+      e.preventDefault();
+      goTo(node.dataset.target, centerOf(node.querySelector('.node-dot')));
+    });
+
+    ['mouseenter', 'focus'].forEach(function (evt) {
+      node.addEventListener(evt, function () {
+        if (!hubHint) return;
+        hubHint.innerHTML = '// <b>' + sectionLabel(node.dataset.target) + '</b> — ' + node.dataset.hint;
+      });
+    });
+    ['mouseleave', 'blur'].forEach(function (evt) {
+      node.addEventListener(evt, function () {
+        if (hubHint) hubHint.innerHTML = defaultHint;
+      });
+    });
   });
 
-  mobileNav.querySelectorAll('a').forEach(function (a) {
-    a.addEventListener('click', closeMobile);
+  document.querySelectorAll('[data-close], [data-home]').forEach(function (btn) {
+    btn.addEventListener('click', function (e) {
+      e.preventDefault();
+      goHome();
+    });
+  });
+
+  function step(delta) {
+    if (!current) return;
+    var idx = (order.indexOf(current) + delta + order.length) % order.length;
+    goTo(order[idx]);
+  }
+
+  document.querySelectorAll('[data-go]').forEach(function (btn) {
+    btn.addEventListener('click', function () {
+      step(btn.dataset.go === 'next' ? 1 : -1);
+    });
   });
 
   document.addEventListener('keydown', function (e) {
-    if (e.key === 'Escape') closeMobile();
+    if (e.key === 'Escape' && current) { goHome(); return; }
+    if (!current) return;
+    var tag = (e.target.tagName || '').toLowerCase();
+    if (tag === 'input' || tag === 'textarea') return;
+    if (e.key === 'ArrowRight') step(1);
+    if (e.key === 'ArrowLeft')  step(-1);
   });
 
-  /* -----------------------------------------------
-     FADE-IN via IntersectionObserver
-  ----------------------------------------------- */
-  var fadeEls = document.querySelectorAll('.fade-in');
+  document.querySelectorAll('a[href^="#"]').forEach(function (a) {
+    if (a.classList.contains('node') || a.hasAttribute('data-home')) return;
+    a.addEventListener('click', function (e) {
+      var id = a.getAttribute('href').replace('#', '');
+      if (order.indexOf(id) === -1) return;
+      e.preventDefault();
+      goTo(id);
+    });
+  });
 
-  if ('IntersectionObserver' in window) {
-    var observer = new IntersectionObserver(function (entries) {
-      entries.forEach(function (entry) {
-        if (entry.isIntersecting) {
-          entry.target.classList.add('visible');
-          observer.unobserve(entry.target);
-        }
-      });
-    }, { threshold: 0.1 });
-
-    fadeEls.forEach(function (el) { observer.observe(el); });
-  } else {
-    fadeEls.forEach(function (el) { el.classList.add('visible'); });
-  }
-
-  /* -----------------------------------------------
-     FORMULÁRIO — monta um mailto (sem back-end)
-  ----------------------------------------------- */
   var form = document.getElementById('contactForm');
 
   form.addEventListener('submit', function (e) {
@@ -131,9 +184,6 @@
     showToast('📨 Abrindo seu app de e-mail...', '#10b981');
   });
 
-  /* -----------------------------------------------
-     TOAST
-  ----------------------------------------------- */
   var toastTimer;
   function showToast(msg, color) {
     var toast = document.getElementById('toast');
@@ -146,26 +196,8 @@
     toastTimer = setTimeout(function () { toast.classList.remove('show'); }, 3200);
   }
 
-  /* -----------------------------------------------
-     SCROLL SUAVE com offset da navbar
-  ----------------------------------------------- */
-  document.querySelectorAll('a[href^="#"]').forEach(function (a) {
-    a.addEventListener('click', function (e) {
-      var href = a.getAttribute('href');
-      if (href === '#') return;
-
-      var target = document.querySelector(href);
-      if (!target) return;
-
-      e.preventDefault();
-      var top = target.getBoundingClientRect().top + window.scrollY - 60;
-      window.scrollTo({ top: top, behavior: reduceMotion ? 'auto' : 'smooth' });
-      history.replaceState(null, '', href);
-    });
-  });
-
-  /* -----------------------------------------------
-     ANO NO RODAPÉ
-  ----------------------------------------------- */
   document.getElementById('year').textContent = new Date().getFullYear();
+
+  render();
+  requestAnimationFrame(function () { hub.classList.add('ready'); });
 })();
